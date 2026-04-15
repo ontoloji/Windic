@@ -1,0 +1,2 @@
+# Windic
+Windows dictionary
