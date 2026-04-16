@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
     QApplication,
     QLineEdit,
     QMenu,
+    QStyle,
     QTextEdit,
     QVBoxLayout,
     QWidget,
@@ -25,11 +26,17 @@ import keyboard
 def get_app_icon() -> QIcon:
     """Load app icon from assets if present, otherwise use an empty icon."""
     if getattr(sys, "frozen", False):
-        base_path = Path(sys.executable).parent
-    else:
-        base_path = Path(__file__).resolve().parent
+        meipass = getattr(sys, "_MEIPASS", None)
+        if meipass:
+            icon_path = Path(meipass) / "assets" / "windic.ico"
+            if icon_path.exists():
+                return QIcon(str(icon_path))
 
-    icon_path = base_path / "assets" / "windic.ico"
+        executable_icon = Path(sys.executable)
+        if executable_icon.exists():
+            return QIcon(str(executable_icon))
+
+    icon_path = Path(__file__).resolve().parent / "assets" / "windic.ico"
     if icon_path.exists():
         return QIcon(str(icon_path))
     return QIcon()
@@ -83,6 +90,7 @@ class CompactTranslateWindow(QWidget):
         self._drag_position = QPoint()
         self.source_lang = "auto"
         self.target_lang = "tr"
+        self.tray_icon: QSystemTrayIcon | None = None
 
         self.drag_handle = QWidget(self)
         self.drag_handle.setObjectName("dragHandle")
@@ -140,14 +148,25 @@ class CompactTranslateWindow(QWidget):
 
         self.input_box.textChanged.connect(self.on_text_changed)
 
-        self.toggle_shortcut = QShortcut(QKeySequence("Ctrl+Shift+Space"), self)
-        self.toggle_shortcut.activated.connect(self.toggle_visible)
         self.hide_shortcut = QShortcut(QKeySequence("Ctrl+M"), self)
-        self.hide_shortcut.activated.connect(self.hide)
+        self.hide_shortcut.activated.connect(self.minimize_to_tray)
         self.tr_to_en_shortcut = QShortcut(QKeySequence("Ctrl+T"), self)
         self.tr_to_en_shortcut.activated.connect(self.set_direction_tr_to_en)
         self.en_to_tr_shortcut = QShortcut(QKeySequence("Ctrl+I"), self)
         self.en_to_tr_shortcut.activated.connect(self.set_direction_en_to_tr)
+
+    def set_tray_icon(self, tray_icon: QSystemTrayIcon) -> None:
+        self.tray_icon = tray_icon
+
+    def minimize_to_tray(self) -> None:
+        self.hide()
+        if self.tray_icon and self.tray_icon.supportsMessages():
+            self.tray_icon.showMessage(
+                "Windic",
+                "Uygulama sistem tepsisinde calisiyor. Geri acmak icin Ctrl+Shift+Space kullanin.",
+                QSystemTrayIcon.Information,
+                2500,
+            )
 
     def _translate_via_public_endpoint(self, text: str) -> str:
         """Fallback for when googletrans fails due to token/service issues."""
@@ -268,13 +287,17 @@ class CompactTranslateWindow(QWidget):
 
     def keyPressEvent(self, event) -> None:  # type: ignore[override]
         if event.key() == Qt.Key_Escape:
-            self.hide()
+            self.minimize_to_tray()
             return
         super().keyPressEvent(event)
 
 
 def create_tray(app: QApplication, window: CompactTranslateWindow) -> QSystemTrayIcon:
-    tray = QSystemTrayIcon(get_app_icon(), app)
+    tray_icon = get_app_icon()
+    if tray_icon.isNull():
+        tray_icon = app.style().standardIcon(QStyle.SP_ComputerIcon)
+
+    tray = QSystemTrayIcon(tray_icon, app)
 
     menu = QMenu()
     show_action = QAction("Open Translator", menu)
@@ -295,6 +318,7 @@ def create_tray(app: QApplication, window: CompactTranslateWindow) -> QSystemTra
         else None
     )
     tray.show()
+    window.set_tray_icon(tray)
     
     if not tray.isVisible():
         raise RuntimeError("Failed to display system tray icon. Check Windows system tray settings.")
@@ -329,10 +353,10 @@ def main() -> int:
         app.aboutToQuit.connect(keyboard.unhook_all_hotkeys)
     app.aboutToQuit.connect(tray.hide)
 
-    if "--show" in sys.argv:
-        window.toggle_visible()
-    else:
+    if "--background" in sys.argv:
         window.hide()
+    else:
+        window.toggle_visible()
 
     return app.exec()
 
